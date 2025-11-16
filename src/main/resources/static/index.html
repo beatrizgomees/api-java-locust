@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard Avançado</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #1e1e1e;
+            color: #fff;
+            padding: 20px;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 25px;
+            margin-top: 25px;
+        }
+        .card {
+            background: #2b2b2b;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.6);
+        }
+        canvas {
+            width: 100% !important;
+        }
+        input {
+            width: 140px;
+            margin: 5px;
+            padding: 6px;
+            border-radius: 6px;
+            border: none;
+        }
+        button {
+            padding: 8px 14px;
+            background: #2196f3;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            color: white;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #1976d2;
+        }
+        #resultado {
+            white-space: pre-wrap;
+            background: #2b2b2b;
+            padding: 15px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Dashboard de Métricas</h1>
+
+<div class="card">
+    <h2>Enviar Valores</h2>
+    <input id="v1" type="number" placeholder="Valor 1">
+    <input id="v2" type="number" placeholder="Valor 2">
+    <input id="v3" type="number" placeholder="Valor 3">
+    <input id="v4" type="number" placeholder="Valor 4">
+    <button onclick="enviar()">Enviar</button>
+    <pre id="resultado">Nenhum envio ainda.</pre>
+</div>
+
+<div class="grid">
+
+    <div class="card">
+        <h2>Gráfico Misto (Barras + Linha)</h2>
+        <canvas id="graficoMisto"></canvas>
+    </div>
+
+    <div class="card">
+        <h2>Gauge de Desempenho</h2>
+        <canvas id="gauge"></canvas>
+    </div>
+
+    <div class="card">
+        <h2>Heatmap de Carga</h2>
+        <canvas id="heatmap"></canvas>
+    </div>
+
+    <div class="card">
+        <h2>Histórico Temporal</h2>
+        <canvas id="histTempo"></canvas>
+    </div>
+
+</div>
+
+<script>
+    let mistoChart, gaugeChart, heatmapChart, tempoChart;
+
+    // -----------------------------
+    // ENVIA VALORES
+    // -----------------------------
+    function enviar() {
+        const dados = {
+            valor1: parseFloat(document.getElementById('v1').value),
+            valor2: parseFloat(document.getElementById('v2').value),
+            valor3: parseFloat(document.getElementById('v3').value),
+            valor4: parseFloat(document.getElementById('v4').value)
+        };
+
+        fetch("/api/enviar", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(dados)
+        })
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById("resultado").textContent =
+                    JSON.stringify(data, null, 2);
+
+                carregarDashboard();
+            });
+    }
+
+    // -----------------------------
+    // CARREGA GRÁFICOS
+    // -----------------------------
+    function carregarDashboard() {
+        fetch("/api/todas")
+            .then(r => r.json())
+            .then(data => {
+                const labels = data.map(e => "ID " + e.id);
+                const medias = data.map(e => e.media);
+                const somas = data.map(e => e.soma);
+                const desvios = data.map(e => e.desvio);
+                const timestamps = data.map(e => e.timestamp);
+
+                atualizarGraficoMisto(labels, medias, somas);
+                atualizarGauge(medias.at(-1));
+                atualizarHeatmap(medias);
+                atualizarHistoricoTempo(timestamps, medias);
+            });
+    }
+
+    // -----------------------------
+    // GRÁFICO MISTO
+    // -----------------------------
+    function atualizarGraficoMisto(labels, medias, somas) {
+
+        if (mistoChart) mistoChart.destroy();
+
+        mistoChart = new Chart(document.getElementById("graficoMisto"), {
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Soma',
+                        data: somas,
+                        backgroundColor: "rgba(52,152,219,0.6)"
+                    },
+                    {
+                        type: 'line',
+                        label: 'Média',
+                        data: medias,
+                        borderColor: "rgba(46,204,113,1)",
+                        borderWidth: 3,
+                        tension: 0.4,
+                        fill: false
+                    }
+                ]
+            }
+        });
+    }
+
+    // -----------------------------
+    // GAUGE
+    // -----------------------------
+    function atualizarGauge(valor) {
+
+        if (!valor) valor = 0;
+
+        if (gaugeChart) gaugeChart.destroy();
+
+        gaugeChart = new Chart(document.getElementById("gauge"), {
+            type: "doughnut",
+            data: {
+                labels: ["Desempenho", ""],
+                datasets: [{
+                    data: [valor, 100 - valor],
+                    backgroundColor: ["#2ecc71", "#555"]
+                }]
+            },
+            options: {
+                rotation: -90,
+                circumference: 180,
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // -----------------------------
+    // HEATMAP (simples)
+    // -----------------------------
+    function atualizarHeatmap(medias) {
+
+        if (heatmapChart) heatmapChart.destroy();
+
+        heatmapChart = new Chart(document.getElementById("heatmap"), {
+            type: "bar",
+            data: {
+                labels: medias.map((_, i) => "Req " + (i+1)),
+                datasets: [{
+                    label: "Calor",
+                    data: medias,
+                    backgroundColor: medias.map(v =>
+                        `rgba(${(v*10)%255}, 50, 150, 0.8)`
+                    )
+                }]
+            }
+        });
+    }
+
+    // -----------------------------
+    // HISTÓRICO TEMPORAL
+    // -----------------------------
+    function atualizarHistoricoTempo(timestamps, medias) {
+
+        if (tempoChart) tempoChart.destroy();
+
+        tempoChart = new Chart(document.getElementById("histTempo"), {
+            type: "line",
+            data: {
+                labels: timestamps.map(t => new Date(t)),
+                datasets: [{
+                    label: "Média ao longo do tempo",
+                    data: medias,
+                    borderColor: "orange",
+                    borderWidth: 3,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                scales: {
+                    x: { type: "time", time: { unit: "second" } }
+                }
+            }
+        });
+    }
+
+    // Carrega ao abrir
+    carregarDashboard();
+</script>
+
+</body>
+</html>
